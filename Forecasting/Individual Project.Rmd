@@ -1,0 +1,200 @@
+---
+title: "Individual Project"
+output: html_document
+date: "2024-02-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Part 0 - Packages
+
+Please load any packages used in this script in the section below.
+```{r cars}
+library(TSA)
+library(astsa)
+library(forecast)
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(ggplot2)
+library(tseries)
+
+```
+
+
+```{r pressure, echo=FALSE}
+sales_data= read.csv('interview_use_case.csv')
+# Use pivot_longer to convert wide format to long format
+sales_data <- pivot_longer(sales_data, cols = -c(Category1, Category2, Category3), 
+                           names_to = "Month", values_to = "Sales")
+
+# Convert Month column to Date format if needed
+sales_data$Month <- as.Date(paste0(sub("^X", "", sales_data$Month), "-01"), format = "%y.%b-%d")
+
+# Remove rows with any NA values or 0
+sales_data <- sales_data[complete.cases(sales_data), ]
+sales_data <- sales_data %>%
+  filter(Sales != 0)
+# View the first few rows of the transformed data
+(sales_data)
+```
+
+```{r}
+# Extracting the year from the 'Month' column
+sales_data$Year <- as.integer(format(sales_data$Month, "%Y"))
+
+# Calculate yearly sales sum --> For Bar Graph
+yearly_sales <- sales_data %>%
+  group_by(Year) %>%
+  summarise(Total_Sales = sum(Sales)) %>%
+  arrange(Year)  # Ensure the data is sorted by year
+
+# Calculate yearly growth rates
+yearly_sales$Growth_Rate <- c(NA, yearly_sales$Total_Sales[-1] / yearly_sales$Total_Sales[-nrow(yearly_sales)] - 1)
+
+# Print yearly sales and growth rates
+print(yearly_sales)
+
+# Plotting yearly sales with custom aesthetics
+ggplot(yearly_sales, aes(x = Year, y = Total_Sales, color = "Sales Trend")) +
+  geom_line() +
+  labs(title = "Yearly Sales Trend", x = "Year", y = "Total Sales", color = "Legend") +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.text = element_text(size = 12), 
+    axis.title = element_text(size = 14, face = "bold") 
+  ) +
+  scale_color_manual(values = c("Sales Trend" = "red")) 
+
+
+```
+
+```{r}
+#Calculating more Graphs for Data Exploration
+avg_sales_by_category1 <- sales_data %>%
+  group_by(Category1) %>%
+  summarise(avg_sales = sum(Sales))
+
+ggplot(avg_sales_by_category1, aes(x = Category1, y = avg_sales, fill = Category1)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Total Sales by Category1", x = "Category1", y = "Average Sales") +
+  theme(legend.position = "none")
+
+avg_sales_by_category2 <- sales_data %>%
+  group_by(Category2) %>%
+  summarise(avg_sales = sum(Sales))
+
+ggplot(avg_sales_by_category2, aes(x = Category2, y = avg_sales, fill = Category2)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Total Sales by Category2", x = "Category2", y = "Average Sales") +
+  theme(legend.position = "none")
+
+avg_sales_by_category3 <- sales_data %>%
+  group_by(Category3) %>%
+  summarise(avg_sales = sum(Sales))
+
+ggplot(avg_sales_by_category3, aes(x = Category3, y = avg_sales, fill = Category3)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Total Sales by Category3", x = "Category3", y = "Average Sales") +
+  theme(legend.position = "none")
+
+# Format Month to month names
+sales_data$Month <- format(sales_data$Month, "%b")
+
+# Calculate average sales for each month
+monthly_sales <- sales_data %>%
+  group_by(Month) %>%
+  summarise(Avg_Sales = mean(Sales))
+
+# Plotting month-wise average sales with formatted axes
+ggplot(monthly_sales, aes(x = Month, y = Avg_Sales)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Month-wise Average Sales", x = "Month", y = "Average Sales (USD)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold"), 
+    axis.text = element_text(size = 12), 
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14)  # Adjust x-axis label size
+  ) +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  scale_x_discrete(labels = c("Jan" = "Janu", "Feb" = "Feb", "Mar" = "Mar", "Apr" = "Apr",
+                              "May" = "May", "Jun" = "June", "Jul" = "July", "Aug" = "Aug",
+                              "Sep" = "Sept", "Oct" = "Oct", "Nov" = "Nov", "Dec" = "Dec"))
+
+```
+
+```{r}
+# Choosing the Specific Category of A, A, B for this model - want to investigate
+sales_data <- sales_data %>%
+  filter(Category1 == "A" & Category2 == "A" & Category3 == "B")
+print(sales_data)
+#Creating a time series for this certain category
+ts_sales <- ts(sales_data$Sales,start=c(2013,1), frequency=12)
+```
+
+
+
+```{r}
+#Grabbing autoplot, acf, pacf, and auto.arima of time series
+autoplot(ts_sales)
+autoplot(diff(ts_sales))
+acf(ts_sales)
+pacf(ts_sales)
+auto.arima(ts_sales)
+```
+```{r}
+#Calculating Sarima Model
+sarima_model <- sarima(ts_sales, 0,1,1,0,1,0,12)
+```
+
+```{r}
+#Fitting the ARIMA Model of MA(1), and creating a summary of it
+model_fit = Arima(ts_sales, order=c(0,1, 1),seasonal=list(order=c(0, 1, 0), period=12),
+                  include.constant=T)
+# Summary of the fitted model
+summary(model_fit)
+```
+
+```{r}
+#Checking the residuals
+checkresiduals(model_fit)
+```
+```{r}
+#Calculating the RMSE of our forecasted model
+rmse = function(e){ sqrt(mean(e^2, na.rm=T))
+}
+forecast_function_arima = function(x, h){
+Arima(x, order=c(0, 1, 1),seasonal=list(order=c(0, 1, 0), period=12),
+      include.constant=T) %>%
+forecast(h=h)
+}
+errors_from_arima = tsCV(ts_sales, forecast_function_arima, h=1) 
+rmse(errors_from_arima)
+```
+
+```{r}
+#Forecasting for the next 12 months
+m_arima = Arima(ts_sales, order=c(0,1, 1),seasonal=list(order=c(0, 1, 0), period=12,
+                                                      include.constant=T))
+sales_next_12_quarters = forecast(m_arima, h=12) # Print the forecast values 
+print(sales_next_12_quarters$mean)
+```
+```{r}
+autoplot(ts_sales) + 
+  autolayer(sales_next_12_quarters)
+```
+
+```{r}
+# Extract forecasted values and corresponding dates
+forecast_data <- data.frame(Month = seq(as.Date("2016-09-01"), by = "month", length.out = 12),
+                             Forecast = sales_next_12_quarters$mean)
+
+# Write the forecasted data to a CSV file
+write.csv(forecast_data, "forecast.csv", row.names = FALSE)
+```
+

@@ -1,0 +1,202 @@
+---
+title: "Appendices"
+author: "Andrew Wolfe and Morgan Huhndorff"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r packages, include = FALSE}
+# Load any packages you may need here
+library(car)
+library(emmeans)
+```
+
+
+```{r readData, include = FALSE}
+#Read in the data 
+cancer <- read.csv("cancer_mortality_rates.csv")
+```
+
+***
+
+#### Figure 1: Numerical Summaries of Data
+
+```{r figure1, echo = FALSE}
+summary(cancer[c(1,3,14,17)])
+
+lm_cancer <- lm(cmRate ~ medianIncome + pctPrivateHC + pctWhite, data = cancer)
+summary(lm_cancer)
+```
+
+***
+
+#### Figure 2: Scatterplot Matrix of Data
+
+```{r figure2, echo=FALSE}
+plot(~ cmRate + medianIncome + pctPrivateHC + pctWhite,data = cancer)
+```
+
+***
+
+#### Figure 3: Histogram of Variables
+
+```{r figure3, echo=FALSE}
+#response
+hist(cancer$cmRate,
+     main = "Histogram of Cancer Mortality Rates",
+     xlab = "Mortalities (per 100,000 people)")
+
+#predictors
+hist(cancer$medianIncome,
+     main = "Histogram of County Median Income",
+     xlab = "Median Income ($)")
+hist(cancer$pctPrivateHC,
+     main = "Histogram of Residents with Private Healthcare",
+     xlab = "Percentage")
+hist(cancer$pctWhite,
+     main = "Histogram of Percentage of White Residents",
+     xlab = "Percentage")
+hist(cancer$pctEmployed,
+     main = "Histogram of Percentage of Employed Residents",
+     xlab = "Percentage")
+```
+
+***
+
+#### Figure 4: Transformation of Percentage White Variable
+
+```{r figure4, echo = FALSE}
+cancer$pctNonWhite <- (100 - cancer$pctWhite) + 0.1
+hist(log(cancer$pctNonWhite),
+     xlab = "log(pctNonWhite)",
+     main = "Histogram of log(pctNonWhite)")
+```
+
+***
+
+#### Figure 5: Quadratic Term
+
+```{r figure5, echo = FALSE}
+lm_quadratic <- lm(cmRate ~ medianIncome + I(medianIncome^2), data = cancer)
+summary(lm_quadratic)
+
+```
+*** 
+
+### Figure 6: Scatterplot
+
+```{r figure6, echo = FALSE}
+plot(cmRate ~ pctEmployed, data = cancer,
+     xlab = "Residents Employed (%)",
+     ylab = "Cancer Mortalities (per 100k)",
+     main = "Scatterplot of Cancer Mortalities vs Residents Employed"
+     )
+```
+
+
+***
+
+#### Figure 7: Categorical Variable Region
+
+```{r figure7, echo = FALSE}
+boxplot(cancer$cmRate ~ cancer$region,
+        main = "Boxplots of Cancer Mortalities by Region",
+        ylab = "Cancer Mortalities (per 100,000 people)",
+        xlab = "Region")
+```
+
+```{r, echo = FALSE}
+#Test for a difference in the estimated means of each Region
+lm_r <- lm(cmRate ~ region, data = cancer)
+pairs(emmeans(lm_r, specs = "region"), adjust = "none")
+```
+
+***
+
+#### Figure 8: Interaction Term
+
+```{r figure8, echo = FALSE}
+#Change region to a factor
+cancer$region <- as.factor(cancer$region)
+
+lm_region <- lm(cmRate ~ pctPrivateHC * region, data = cancer)
+summary(lm_region)
+```
+***
+
+#### Figure 9: Scatterplot by group
+
+```{r figure9, echo = FALSE}
+plot(cmRate ~ pctPrivateHC,
+     data = cancer,
+     col = c("red","blue","yellowgreen","gray40","purple4")[region],
+     pch = c(1,2,3,4,5)[region],
+     xlab = "Residents with Private Health Coverage (%)",
+     ylab = "Cancer Mortalities (per 100,000 people)",
+     main = "Scatterplot of Cancer Mortalities vs Private Health Care \n by Region")
+
+abline(a = 262.36621, b = -1.24555, col = "red")
+abline(a = 262.36621 + 1.95485 , b = -1.24555 - 0.03282, col = "blue")
+abline(a = 262.36621 - 20.92079, b = -1.24555 + 0.43423, col = "yellowgreen")
+abline(a = 262.36621 - 95.70596, b = -1.24555 + 1.33823, col = "gray40")
+abline(a = 262.36621 - 55.54333, b = -1.24555 + 0.49217, col = "purple4")
+
+legend(x= 78, y = 300,
+       legend = levels(cancer$region),
+       col = c("red","blue","yellowgreen","gray40","purple4"),
+       pch = c(1,2,3,4,5))
+```
+***
+
+#### Figure 10: Model Comparison
+```{r figure10, echo = FALSE}
+lm_interaction <- lm(cmRate ~ medianIncome + I(medianIncome^2) + log(pctNonWhite) + pctEmployed + pctPrivateHC * region, data = cancer)
+lm_noInteraction <- lm(cmRate ~ medianIncome + I(medianIncome^2) + log(pctNonWhite) + pctEmployed + pctPrivateHC, data = cancer)
+
+summary(lm_interaction)
+summary(lm_noInteraction)
+```
+***
+#### Figure 11: Assumptions for Models
+
+```{r figure11, echo = FALSE}
+qqnorm(lm_interaction$residuals, main = "QQ Plot of the Residuals")
+qqline(lm_interaction$residuals)
+
+plot(lm_interaction$fitted.values, lm_interaction$residuals,
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted Values Plot")
+
+abline(h = 0, lty = 2, col = "red")
+```
+
+***
+
+#### Figure 12: Summary Ouput of Model 1
+
+```{r figure12, echo = FALSE}
+lm_cancer <- lm(cmRate ~ medianIncome + I(medianIncome^2) + log(pctNonWhite) + pctPrivateHC + pctEmployed, data = cancer)
+summary(lm_cancer)
+```
+
+***
+
+#### Figure 13: VIFs for Model 1
+
+```{r figure 13, echo = FALSE}
+vif(lm_cancer)
+```
+
+***
+
+
+
+
+
+
+

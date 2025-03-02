@@ -1,0 +1,218 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-02-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+# Load necessary libraries
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(glmnet) # for Linear Regression with regularization (Ridge/Lasso)
+library(e1071) # for SVM
+library(class)  # for KNN
+library(gbm)    # for Gradient Boosting Machines
+
+# Load data
+WR_with_Salary_REAL <- read.csv('wr_salary_stats_24.csv')
+WR_with_Salary <- read.csv('wr_salary_stats_24.csv')
+
+# Step 1: Remove non-numeric columns (e.g., player_name, Pos.)
+data <- WR_with_Salary %>%
+  select(-player_name,-racr,-yards_per_catch,-Expected_Yards_After_Catch_PlusMinus,-catches,-Average_Cushion)
+
+# Step 2: Apply log transformation to the target variable
+data$log_APY <- log1p(data$APY)  # log1p applies log(x+1), which handles zero or small values
+# Step 3: Split data into training and test sets
+set.seed(123)
+trainIndex <- createDataPartition(data$log_APY, p = 0.75, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# Step 4: Features and target variable
+X_train <- train_data %>% select(-APY, -log_APY)
+y_train <- train_data$log_APY
+X_test <- test_data %>% select(-APY, -log_APY)
+y_test <- test_data$log_APY
+
+# Step 5: Feature Scaling using preProcess from caret
+scaler <- preProcess(X_train, method = c("center", "scale"))
+X_train_scaled <- predict(scaler, X_train)
+X_test_scaled <- predict(scaler, X_test)
+
+# Step 6: 10-Fold Cross-Validation
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Step 7: Train Linear Regression Model
+lr_model <- train(X_train_scaled, y_train, method = "lm", trControl = ctrl)
+
+# Step 8: Train Lasso Model (Linear Regression with L1 regularization)
+lasso_model <- train(X_train_scaled, y_train, method = "glmnet", trControl = ctrl, 
+                     tuneGrid = expand.grid(alpha = 1, lambda = seq(0, 0.1, length.out = 100)))
+
+# Step 9: Train Ridge Model (Linear Regression with L2 regularization)
+ridge_model <- train(X_train_scaled, y_train, method = "glmnet", trControl = ctrl, 
+                     tuneGrid = expand.grid(alpha = 0, lambda = seq(0, 0.1, length.out = 100)))
+
+# Step 10: Train ElasticNet Model (Combination of L1 and L2 regularization)
+elastic_model <- train(X_train_scaled, y_train, method = "glmnet", trControl = ctrl, 
+                       tuneGrid = expand.grid(alpha = seq(0, 1, length.out = 100), 
+                                              lambda = seq(0, 0.1, length.out = 100)))
+
+# Step 11: Train Random Forest Regressor Model
+rf_model <- train(X_train_scaled, y_train, method = "rf", trControl = ctrl, 
+                  tuneGrid = expand.grid(mtry = seq(2, ncol(X_train_scaled), by = 1)), 
+                  ntree = 500)
+# Step 13: Performance evaluation (RMSE) for all models
+models <- list(
+  LinearRegression = lr_model,
+  Lasso = lasso_model,
+  Ridge = ridge_model,
+  ElasticNet = elastic_model,
+  RandomForest = rf_model)
+
+rmse_results <- data.frame(Model = character(), RMSE = numeric())
+
+for(model_name in names(models)) {
+  model <- models[[model_name]]
+  pred_log <- predict(model, X_test_scaled)
+  rmse_value <- sqrt(mean((pred_log - y_test)^2))
+  rmse_results <- rbind(rmse_results, data.frame(Model = model_name, RMSE = rmse_value))
+}
+
+# Visualize RMSE results
+ggplot(rmse_results, aes(x = Model, y = RMSE)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  ggtitle("RMSE for Different Models") +
+  ylab("RMSE") +
+  theme_minimal()
+
+# Step 14: Feature importance from Random Forest (optional)
+rf_importance <- data.frame(
+  Feature = colnames(X_train_scaled),
+  Importance = rf_model$finalModel$importance[, 1]
+) %>% arrange(desc(Importance))
+
+ggplot(rf_importance, aes(x = Importance, y = reorder(Feature, Importance))) +
+  geom_bar(stat = "identity") +
+  ggtitle("Random Forest Feature Importance") +
+  xlab("Importance") +
+  ylab("Feature") +
+  theme_minimal()
+
+# Step 15: Predictions for the entire dataset using Random Forest model
+X_scaled <- predict(scaler, data %>% select(-APY, -log_APY))
+
+# Predict for all players in the dataset
+rf_all_pred_log <- predict(rf_model, X_scaled)
+rf_all_pred <- expm1(rf_all_pred_log)  # Inverse of log1p
+
+# Step 16: Add predicted values back to the original dataset
+WR_with_Salary_REAL$RF_Predicted_APY <- rf_all_pred
+
+# Step 17: Calculate differences (underpayment or overpayment) for each model
+WR_with_Salary_REAL$RF_Difference <- WR_with_Salary_REAL$APY - WR_with_Salary_REAL$RF_Predicted_APY
+
+# Step 18: Show the top 10 players who are underpaid or overpaid based on Random Forest predictions
+top_3_overpaid <- WR_with_Salary_REAL %>%
+  arrange(desc(RF_Difference)) %>%
+  head(3) %>%
+  select(player_name, APY, RF_Predicted_APY, RF_Difference)
+
+top_3_underpaid <- WR_with_Salary_REAL %>%
+  arrange(RF_Difference) %>%
+  head(5) %>%
+  select(player_name, APY, RF_Predicted_APY, RF_Difference)
+
+# Optionally: Show the updated dataset with all predictions and differences
+print(head(WR_with_Salary_REAL %>%
+  select(player_name, APY, RF_Predicted_APY, RF_Difference))) 
+
+# Step 19: Export the top 10 players to CSV
+#write.csv(top_3_overpaid, 'top_3_overpaid_players_wr.csv', row.names = FALSE)
+#write.csv(top_3_underpaid, 'top_3_underpaid_players_wr.csv', row.names = FALSE)
+```
+
+```{r}
+# Step 1: Predict for the entire dataset using Random Forest model
+X_scaled <- predict(scaler, data %>% select(-APY, -log_APY))
+
+# Predict for all players in the dataset using the Random Forest model
+rf_all_pred_log <- predict(rf_model, X_scaled)
+rf_all_pred <- expm1(rf_all_pred_log)  # Inverse of log1p to get original scale of APY
+
+# Step 2: Add predicted values back to the original dataset
+WR_with_Salary_REAL$RF_Predicted_APY <- rf_all_pred
+
+# Step 3: Calculate differences (underpayment or overpayment) for each model
+WR_with_Salary_REAL$RF_Difference <- WR_with_Salary_REAL$APY - WR_with_Salary_REAL$RF_Predicted_APY
+
+# Step 4: Show the top 10 players who are underpaid or overpaid based on Random Forest predictions
+top_3_overpaid_rf <- WR_with_Salary_REAL %>%
+  arrange(desc(RF_Difference)) %>%
+  head(2) %>%
+  select(player_name, APY, RF_Predicted_APY, RF_Difference)
+
+top_3_underpaid_rf <- WR_with_Salary_REAL %>%
+  arrange(RF_Difference) %>%
+  head(2) %>%
+  select(player_name, APY, RF_Predicted_APY, RF_Difference)
+
+# Optionally: Show the updated dataset with all predictions and differences
+print(head(WR_with_Salary_REAL %>%
+  select(player_name, APY, RF_Predicted_APY, RF_Difference)))
+
+# Step 5: Export the top 3 overpaid and top 5 underpaid players to CSV
+#write.csv(top_3_overpaid_rf, 'top_2_overpaid_players_rf_wr.csv', row.names = FALSE)
+#write.csv(top_3_underpaid_rf, 'top_2_underpaid_players_rf_Wr.csv', row.names = FALSE)
+
+# Step 6: Export the entire updated dataset with projected salaries and differences to CSV
+#write.csv(WR_with_Salary_REAL, 'WR_with_Salary_with_Projected_RF.csv', row.names = FALSE)
+```
+
+```{r}
+# Combine the top 3 overpaid and underpaid players into one dataset
+top_3_combined <- bind_rows(
+  top_3_underpaid_rf %>% mutate(Salary_Status = "Overpaid"),
+  top_3_overpaid_rf %>% mutate(Salary_Status = "Underpaid")
+)
+
+# Plot the combined data with x-axis in thousands ($K)
+top_3_combined %>%
+  ggplot(aes(x = reorder(player_name, RF_Difference), y = RF_Difference, fill = Salary_Status)) +
+  geom_bar(stat = "identity", show.legend = TRUE) +
+  coord_flip() +
+  scale_fill_manual(values = c("green", "red"), 
+                    labels = c("Underpaid", "Overpaid")) +  # Change legend labels
+  labs(title = "Top 2 Overpaid and Underpaid WRs", 
+       x = "Player", 
+       y = "Difference (Actual - Predicted) in Millions of $", 
+       fill = "Salary Status") +  # Update legend title
+  theme_minimal(base_family = "Times New Roman") +  # Set font to Helvetica
+  theme(
+    # General text size and font
+    text = element_text(size = 14),      
+    axis.title = element_text(size = 16), # Axis titles size
+    axis.text = element_text(size = 12),  # Axis labels size
+    axis.text.x = element_text(size = 10),  # Smaller font size for x-axis labels (player names)
+    plot.title = element_text(hjust = 0.5, size = 18, face = "bold", color = "black"), # Title styling
+    legend.title = element_text(size = 14, face = "bold"),  # Legend title size
+    legend.text = element_text(size = 12),  # Legend text size
+    # Modify the background color for the plot and panel
+    plot.background = element_rect(fill = "lightgray", color = NA),  # Background color
+    panel.background = element_rect(fill = "white", color = "gray"),  # Panel background color
+    panel.grid.major = element_line(color = "gray", size = 0.2),  # Major grid lines color and size
+    panel.grid.minor = element_line(color = "lightgray", size = 0.1)  # Minor grid lines color and size
+  ) +
+  geom_bar(stat = "identity", width = 0.7) +  # Slightly reduce bar width for better spacing
+  scale_x_discrete(expand = expansion(mult = 0.1)) + # Adjust spacing on x-axis for better visibility
+  scale_y_continuous(labels = scales::label_dollar(scale = 0.000001))  # Format y-axis in thousands
+```
+
